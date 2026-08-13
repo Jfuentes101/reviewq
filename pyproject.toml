@@ -1,0 +1,39 @@
+[project]
+name = "reviewq"
+version = "0.1.0"
+description = "Local second-opinion code review, queued, over MCP."
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.0", "uvicorn>=0.30", "starlette>=0.37"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.10"]
+
+[project.scripts]
+reviewq = "reviewq.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+files = ["src"]
+python_version = "3.11"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["mcp.*", "starlette.*"]
+ignore_missing_imports = true
