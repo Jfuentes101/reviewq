@@ -210,6 +210,13 @@ once: a finding lives either in the array or in the summary, never both.
 
 {EVIDENCE}
 
+Something you cannot determine is still a finding. Report it as one: say what you \
+could not establish, what you looked at, and what changes depending on the answer. \
+Do NOT address a question to whoever reads this and do not wait to be told — nobody \
+is going to answer you, because you will not run again. Whoever asked for this review \
+knows what is being built and will decide; your job is to make sure the decision gets \
+made deliberately instead of by default.
+
 Keep it honest and specific — concrete findings over vague praise. Say nothing rather \
 than padding a section with something you did not find.
 """
