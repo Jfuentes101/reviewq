@@ -102,21 +102,82 @@ judgement you are paying for. Facts about the world outside the repo, not argume
 
 ## Configuration
 
-Environment, all optional. `REVIEWQ_IMAGE`, `REVIEWQ_MAX_CONCURRENT` (2),
-`REVIEWQ_BASE_REF` (`origin/main`), `REVIEWQ_REVIEW_COMMAND`
-(`.claude/commands/code-review.md`), `REVIEWQ_TIMEOUT_S` (1800), `REVIEWQ_EFFORT`,
-`REVIEWQ_PORT` (4030), `REVIEWQ_STATE_DIR`.
+Everything is an environment variable and everything has a default that works.
 
-`REVIEWQ_CONTAINER_HOME` (`/home/reviewer`) is where the credentials get mounted
-inside the image. A variable and not a constant because it belongs to whoever built
-the image — point a child image's `REVIEWQ_IMAGE` at a base that names its user
-something else and this is what you change with it. A mismatch breaks the mount with
-no error that says so.
+| variable | default | |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | how it pays, if set. Wins over the session file |
+| `REVIEWQ_CREDENTIALS` | `~/.claude/.credentials.json` | otherwise, the session it mounts |
+| `REVIEWQ_REVIEW_COMMAND` | `.claude/commands/code-review.md` | read from the repo under review |
+| `REVIEWQ_BASE_REF` | `origin/main` | what a review diffs against, per request overridable |
+| `REVIEWQ_MAX_CONCURRENT` | `2` | containers at once; the only brake on spend |
+| `REVIEWQ_IMAGE` | `reviewq-reviewer:latest` | |
+| `REVIEWQ_CONTAINER_HOME` | `/home/reviewer` | where credentials mount inside it |
+| `REVIEWQ_TIMEOUT_S` | `1800` | |
+| `REVIEWQ_EFFORT` | `high` | |
+| `REVIEWQ_CPUS` / `REVIEWQ_MEMORY` / `REVIEWQ_PIDS_LIMIT` | `2` / `4g` / `512` | |
+| `REVIEWQ_HOST` / `REVIEWQ_PORT` | `127.0.0.1` / `4030` | |
+| `REVIEWQ_STATE_DIR` | `~/.local/share/reviewq` | the queue's SQLite file |
+| `REVIEWQ_LOG_LEVEL` | `INFO` | |
+| `REVIEWQ_NO_NEW_PRIVILEGES` | `false` | see below |
 
-`REVIEWQ_NO_NEW_PRIVILEGES` is **off** by default: on an AppArmor host the
-docker-default profile reads the exec-time transition as gaining privileges and
-every `execve` in the container returns EPERM. It still runs unprivileged with all
-capabilities dropped.
+**`REVIEWQ_REVIEW_COMMAND`** is a path *inside the repo being reviewed*, so one
+server serving several projects wants the path they share. A repo that does not have
+that file falls back to reviewq's own prompt — silently, and on purpose: a generic
+review is a better outcome than a failed one.
+
+**`REVIEWQ_CONTAINER_HOME`** belongs to whoever built the image. Point
+`REVIEWQ_IMAGE` at a base that names its user something else and this is what you
+change with it; a mismatch breaks the credentials mount with no error that says so.
+
+**`REVIEWQ_NO_NEW_PRIVILEGES`** is off by default because on an AppArmor host
+(Ubuntu, Pop!_OS) the docker-default profile reads the exec-time transition as
+gaining privileges and every `execve` in the container returns EPERM. The container
+still runs unprivileged with all capabilities dropped.
+
+## Running it as a service
+
+A systemd **user** unit, so it comes up when you log in and dies with your session.
+`~/.config/systemd/user/reviewq.service`:
+
+```ini
+[Unit]
+Description=reviewq — queued local second-opinion code review over MCP
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=%h/work/reviewq/.venv/bin/reviewq
+WorkingDirectory=%h/work/reviewq
+Environment=PYTHONUNBUFFERED=1
+Environment=REVIEWQ_REVIEW_COMMAND=.claude/commands/rp-cr.md
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now reviewq.service
+systemctl --user status reviewq        # the boot line says which image and which auth
+journalctl --user -u reviewq -f        # what it is doing
+systemctl --user restart reviewq       # after any change to the code or the prompt
+```
+
+Do **not** add `PrivateTmp=true`. This bind-mounts host paths into containers, and a
+private `/tmp` would silently mount an empty directory for any workspace under it.
+
+Your user's docker group membership carries into the unit, so nothing else is needed
+to reach the daemon. `loginctl enable-linger $USER` only if you want it up without
+being logged in, which for a local dev tool you probably do not.
+
+**The server holds the prompt in memory.** Editing `contract.py` changes nothing
+until you restart the unit — the one way to be quietly reviewing with last week's
+rules.
 
 ## Known ceilings
 
