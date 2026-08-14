@@ -12,7 +12,8 @@ Claude instance ──MCP/http──▶ reviewq ──docker run --rm──▶ r
 
 ## One branch, not a team
 
-robbie is server-side infrastructure. It stands over a whole repository the way an
+[robbie](https://github.com/Jfuentes101/Claude-Code-Reviewer) is server-side
+infrastructure. It stands over a whole repository the way an
 admin does: polls for every PR that asks for it, reviews many at once across many
 authors, pins the policy it judges by, tracks what it spends, and reports to a
 dashboard and a Slack channel. It answers to the team, which is why it has gates and
@@ -193,7 +194,7 @@ Type=exec
 ExecStart=%h/work/reviewq/.venv/bin/reviewq
 WorkingDirectory=%h/work/reviewq
 Environment=PYTHONUNBUFFERED=1
-Environment=REVIEWQ_REVIEW_COMMAND=.claude/commands/rp-cr.md
+Environment=REVIEWQ_REVIEW_COMMAND=.claude/commands/team-review.md
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
