@@ -10,34 +10,39 @@ Claude instance ──MCP/http──▶ reviewq ──docker run --rm──▶ r
    review_results              N concurrent                 dies with the review
 ```
 
-## robbie, minus GitHub
+## One branch, not a team
 
-robbie pre-reviews pull requests: it polls GitHub for PRs that ask for it, runs a
-container per PR, and publishes its findings as inline comments on the diff, with
-read-only sidecars answering what the diff cannot — is this line already throwing in
-production, is there a ticket describing this feature. It is a fleet, and it guards
-the boundary where work goes to a human.
+robbie is server-side infrastructure. It stands over a whole repository the way an
+admin does: polls for every PR that asks for it, reviews many at once across many
+authors, pins the policy it judges by, tracks what it spends, and reports to a
+dashboard and a Slack channel. It answers to the team, which is why it has gates and
+budgets and a thread you can argue with it in.
 
-This is the same output contract with that entire half removed. No PR, no thread to
-read, no CI to wait on, no findings anchored to diff lines — and what replaces them is
-`context`, a paragraph you write yourself. In one line: robbie reviews what you are
-asking someone to merge; reviewq reviews what you are about to ask robbie about.
+This administers nothing. It watches no repository, gates no merge, tracks no author,
+enforces no policy. It does one thing: it runs a review with none of the main
+session's bias. That is the whole product.
+
+The bias is what you are buying. When the agent that wrote the code reviews the code,
+it is holding the plan, the ticket, and the turns where it talked itself into the
+approach — and it will not call that approach wrong, because it is the one that chose
+it. So the reviewer here gets a separate process, a fresh context, the diff, and the
+`context` paragraph you wrote deliberately. Nothing else reaches it. What comes back
+is a judgement from someone with no stake in your reasoning.
 
 |  | robbie | reviewq |
 |---|---|---|
-| what starts it | a PR requesting a reviewer | an agent calling `request_review` |
-| what it reads | the diff, the PR thread, CI, Sentry, Asana | the working tree, and the `context` you pass |
-| what comes back | inline comments, a label, Slack | JSON an agent branches on |
-| who reads it | the human about to review the PR | the agent that just wrote the code |
-| when | after you push | before you commit, uncommitted work included |
-| its rules | pinned to a ref — a PR must not rewrite its own judge | read from the checkout — here the repo is the authority |
+| scope | a repository, continuously | one branch, when asked |
+| who it serves | the team, and whoever admins it | the single session that asked |
+| how many at once | many PRs, many authors, budgeted | one queue, one machine |
+| what it decides | gates, labels, what reaches a human | nothing — it reports and stops |
+| its rules | pinned centrally, because a PR must not rewrite its own judge | read from the checkout |
 | what it is | orchestrator, sidecars, dashboard, compose | one process, one SQLite file, `127.0.0.1` |
 
-Which makes this the inner loop and robbie the gate. Local is worth having because the
-round trip is minutes instead of a push and a wait, and because the answer is objects
-rather than prose: an agent can queue a review, keep working, read the verdict, fix
-what holds and go again with nobody in the loop. `/refine` is that loop. By the time
-robbie sees the branch, the cheap findings are already gone.
+Same output contract as robbie, minus everything GitHub — no PR, no thread, no CI, no
+findings anchored to diff lines, and `context` in their place. Which puts this inside
+the loop and robbie at the end of it: an agent queues a review, keeps working, reads
+the verdict, fixes what holds and goes again, with nobody waiting on it. `/refine` is
+that loop. By the time robbie sees the branch, the cheap findings are gone.
 
 ## Why a container
 
