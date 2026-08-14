@@ -357,3 +357,17 @@ async def test_uncommitted_work_lands_in_the_snapshot(tmp_path):
     assert target.branch == "main"
     assert "two" in await _git(ws, "show", f"{target.sha}:a.txt")
     assert (ws / "a.txt").read_text() == "one\ntwo\n", "and it left the tree alone"
+
+
+async def test_an_intent_to_add_entry_says_what_to_do_about_it(tmp_path):
+    """`git add -N` makes `stash create` refuse the whole tree, and git's own words
+    for that name nothing the caller can act on."""
+    from reviewq.runner import snapshot
+
+    ws = tmp_path / "repo"
+    await _repo(ws)
+    (ws / "b.txt").write_text("new\n")
+    await _git(ws, "add", "-N", "b.txt")
+
+    with pytest.raises(RuntimeError, match="git add -N"):
+        await snapshot(ws, "origin/main")

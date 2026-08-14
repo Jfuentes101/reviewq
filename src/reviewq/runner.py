@@ -29,14 +29,20 @@ logger = logging.getLogger("reviewq.runner")
 # into an image so there is no second thing to rebuild when it changes.
 #
 # --shared makes the clone borrow objects from the mount instead of copying them:
-# on a large repo that is a 2s start instead of 40s. It is also what lets us check
-# out a `git stash create` commit that no ref points at.
+# on a large repo that is a 2s start instead of 40s. Borrowing is also what lets us
+# check out a `git stash create` commit that no ref points at — which is why the
+# script writes the alternate itself rather than trusting the flag.
 SCRIPT = r"""
 set -euo pipefail
 prompt="$(cat)"
 
 git clone --quiet --shared /src /work/repo
 cd /work/repo
+# A SHALLOW source silently turns --shared off: git disables the local clone and
+# fetches instead, and a fetch only carries reachable objects — so the unreferenced
+# `git stash create` commit never arrives. Borrow the objects explicitly.
+alt=.git/objects/info/alternates
+grep -qxF /src/.git/objects "$alt" 2>/dev/null || echo /src/.git/objects >> "$alt"
 git checkout --quiet --detach "$REVIEW_SHA"
 
 # The repo's own review command, injected as text rather than loaded by the CLI:
@@ -99,7 +105,14 @@ async def snapshot(workspace: Path, base_ref: str) -> Target:
     ponytail: tracked files only, which is what `stash create` sees. A brand-new
     file nobody has `git add`ed is invisible to the review; add it and it shows up.
     """
-    stashed = await _git(workspace, "stash", "create")
+    try:
+        stashed = await _git(workspace, "stash", "create")
+    except RuntimeError as ex:
+        raise RuntimeError(
+            f"cannot snapshot the working tree: {ex}. An intent-to-add entry "
+            "(`git add -N`, or `git add -p` on a new file) breaks `git stash create`; "
+            "`git add` the file properly, or commit it."
+        ) from ex
     return Target(
         sha=stashed or await _git(workspace, "rev-parse", "HEAD"),
         branch=await _git(workspace, "rev-parse", "--abbrev-ref", "HEAD"),

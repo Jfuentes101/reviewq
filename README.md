@@ -70,6 +70,14 @@ reviewq-reviewer:latest` and point `REVIEWQ_IMAGE` at it.
 | `review_status(id)` | queued / running / done / failed |
 | `review_results(id)` | verdict, summary, findings as objects |
 
+`workspace` is an absolute path to a git repo, and the only argument with no
+default. What gets reviewed is `base_ref` against your **working tree** — staged and
+unstaged changes to tracked files included — so there is nothing to commit first, and
+nothing to squash between rounds of a loop. Then wait: a review takes five to ten minutes, so poll `review_status` on
+that scale — it is the cheap one, and `review_results` before the end tells you the
+same thing at more length. A `failed` review carries its reason there instead, and
+`raw` holds the model's whole response, which is where a parse failure is diagnosed.
+
 ## `context` is the point
 
 The reviewer is fresh, which is what you are buying and also what makes it report
@@ -182,7 +190,14 @@ rules.
 ## Known ceilings
 
 - **Untracked files are invisible.** The snapshot is `git stash create`, which sees
-  tracked files only. `git add` a new file and it shows up.
+  tracked files only. `git add` a new file and it shows up — properly, not `git add
+  -N`: an intent-to-add entry makes `stash create` refuse the whole tree, and the
+  request fails saying so.
+- **A shallow workspace starts slowly.** `git clone --shared` quietly stops sharing
+  when the source has a `.git/shallow`, and copies the object store instead. The
+  clone borrows the objects anyway — the script writes the alternate itself, which
+  is what keeps the unreferenced snapshot commit reachable — but a 500MB repo pays
+  half a minute per review for the copy nobody asked for.
 - **No spend gate.** `max_concurrent` is the only brake — nothing stops a busy
   afternoon from costing more than you meant. Reviews run around $0.30 on a small
   diff and $1.50 on a real one.
