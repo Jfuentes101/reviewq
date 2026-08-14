@@ -10,6 +10,35 @@ Claude instance ──MCP/http──▶ reviewq ──docker run --rm──▶ r
    review_results              N concurrent                 dies with the review
 ```
 
+## robbie, minus GitHub
+
+robbie pre-reviews pull requests: it polls GitHub for PRs that ask for it, runs a
+container per PR, and publishes its findings as inline comments on the diff, with
+read-only sidecars answering what the diff cannot — is this line already throwing in
+production, is there a ticket describing this feature. It is a fleet, and it guards
+the boundary where work goes to a human.
+
+This is the same output contract with that entire half removed. No PR, no thread to
+read, no CI to wait on, no findings anchored to diff lines — and what replaces them is
+`context`, a paragraph you write yourself. In one line: robbie reviews what you are
+asking someone to merge; reviewq reviews what you are about to ask robbie about.
+
+|  | robbie | reviewq |
+|---|---|---|
+| what starts it | a PR requesting a reviewer | an agent calling `request_review` |
+| what it reads | the diff, the PR thread, CI, Sentry, Asana | the working tree, and the `context` you pass |
+| what comes back | inline comments, a label, Slack | JSON an agent branches on |
+| who reads it | the human about to review the PR | the agent that just wrote the code |
+| when | after you push | before you commit, uncommitted work included |
+| its rules | pinned to a ref — a PR must not rewrite its own judge | read from the checkout — here the repo is the authority |
+| what it is | orchestrator, sidecars, dashboard, compose | one process, one SQLite file, `127.0.0.1` |
+
+Which makes this the inner loop and robbie the gate. Local is worth having because the
+round trip is minutes instead of a push and a wait, and because the answer is objects
+rather than prose: an agent can queue a review, keep working, read the verdict, fix
+what holds and go again with nobody in the loop. `/refine` is that loop. By the time
+robbie sees the branch, the cheap findings are already gone.
+
 ## Why a container
 
 A review needs a general-purpose shell — sed, loops, pipes into scripts — so there
@@ -205,5 +234,11 @@ rules.
   database. The prompt tells the model to skip what it cannot run, silently, so a
   review command that shells out to a linter degrades rather than fails — but it
   degrades quietly, which is worth knowing before you wonder why nothing was linted.
+- **Review workspaces you trust.** The read-only mount and the `--rm` bound the
+  damage to *your files*, and that is all they bound. The repo's own
+  `REVIEWQ_REVIEW_COMMAND` is injected as instructions into an agent running
+  `bypassPermissions`, with your credentials mounted and the network open, so on a
+  repo you did not write that file is attacker-controlled input next to your session
+  token. Your own branches are the case this is built for; a stranger's is not.
 - **One machine, one queue.** The server is local and unauthenticated by design; it
   binds `127.0.0.1`. Do not put it on a shared interface.
