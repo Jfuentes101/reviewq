@@ -73,6 +73,27 @@ def severity_count(findings: list[dict], *, blocking: bool) -> int:
     )
 
 
+def verdict_understated(verdict: str | None, findings: list[dict]) -> bool:
+    """Whether the verdict is softer than the findings that came with it.
+
+    The prompt below defines the mapping in both directions — needs-work IS at
+    least one Critical or Must-fix — so a model that lists a Must-fix and then
+    says `ok` has contradicted itself, and `ok` is what a caller stops on. Lives
+    here for the same reason the parser does: the rule is the prompt's, and one
+    of them changing without the other is how this goes wrong.
+
+    Only the soft direction. needs-work over nothing but nitpicks is a reviewer
+    being careful, which is not a mistake and not anyone's problem.
+    """
+    if severity_count(findings, blocking=True):
+        implied = 2
+    elif severity_count(findings, blocking=False):
+        implied = 1
+    else:
+        implied = 0
+    return {"ok": 0, "comment": 1, "needs-work": 2}.get(verdict or "", 0) < implied
+
+
 EVIDENCE = """\
 One rule about severity, and it is the one that separates a useful finding from a \
 plausible one. When you claim a CONCRETE failure — this config silently does the \

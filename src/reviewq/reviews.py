@@ -21,8 +21,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from reviewq.config import Config
-from reviewq.contract import preamble, severity_count
-from reviewq.runner import Run, Target, run_review, snapshot
+from reviewq.contract import preamble, severity_count, verdict_understated
+from reviewq.runner import Run, Target, kill_stale, run_review, snapshot
 
 logger = logging.getLogger("reviewq.queue")
 
@@ -87,14 +87,25 @@ class Queue:
 
         Queued too, not just running: the task that would have picked it up died
         with it, so nothing is ever going to move that row.
+
+        The row is the cheap half. A 'running' one had a container, and that
+        container outlived the process that was waiting on it — still reviewing,
+        still spending — so the row and the container get closed together.
         """
-        cur = self.conn.execute(
+        orphans = [
+            int(row["id"]) for row in self.conn.execute(
+                "SELECT id FROM reviews WHERE state IN ('queued','running')"
+            )
+        ]
+        if not orphans:
+            return
+        self.conn.execute(
             "UPDATE reviews SET state='failed', error='reviewq restarted', finished_at=? "
             "WHERE state IN ('queued','running')",
             (now_ms(),),
         )
-        if cur.rowcount:
-            logger.warning("marked %d orphaned review(s) failed at boot", cur.rowcount)
+        logger.warning("marked %d orphaned review(s) failed at boot", len(orphans))
+        kill_stale(self.cfg, orphans)
 
     async def _spawn(self, review_id: int, workspace: Path, target: Target, prompt: str) -> Run:
         return await run_review(self.cfg, review_id, workspace, target=target, prompt=prompt)
@@ -208,7 +219,7 @@ def as_result(row: sqlite3.Row) -> dict:
     """One row, shaped for whoever asked. Counts included because the first thing
     a caller does with findings is ask how bad it is."""
     findings = json.loads(row["findings"] or "[]")
-    return {
+    result = {
         "id": row["id"],
         "state": row["state"],
         "verdict": row["verdict"],
@@ -216,6 +227,11 @@ def as_result(row: sqlite3.Row) -> dict:
         "findings": findings,
         "blocking": severity_count(findings, blocking=True),
         "should_fix": severity_count(findings, blocking=False),
+        # The verdict is the model's and stays the model's — it is the judgement
+        # being bought, so this reports the contradiction rather than editing it.
+        # It matters because `ok` is what a loop stops on, and a Must-fix under an
+        # `ok` would end the round by agreeing with nobody.
+        "verdict_understated": verdict_understated(row["verdict"], findings),
         "workspace": row["workspace"],
         "base_ref": row["base_ref"],
         "base_sha": row["base_sha"],
@@ -224,3 +240,9 @@ def as_result(row: sqlite3.Row) -> dict:
         "duration_s": row["duration_s"],
         "error": row["error"],
     }
+    # Failures only. `raw` repeats the summary and the findings verbatim, so on a
+    # good review it is a third copy in the caller's context and pays for nothing;
+    # on a failed one it is the only place the answer still exists.
+    if row["state"] == "failed":
+        result["raw"] = row["raw"] or ""
+    return result

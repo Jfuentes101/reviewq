@@ -14,9 +14,11 @@ while a review runs and its file:line still mean what they meant at request time
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,9 +141,44 @@ async def _base(workspace: Path, base_ref: str) -> str:
     )
 
 
+def container_name(cfg: Config, review_id: int) -> str:
+    """Unique per state dir, not merely per id.
+
+    Ids come from a database, so two of them — a test run and the real server, or
+    two state dirs on one machine — hand out `1` independently. Reaping kills by
+    name, and killing `reviewq-1` on the strength of your own row is how a test
+    suite murders a live review that cost a dollar.
+    """
+    token = hashlib.sha256(str(cfg.state_dir).encode()).hexdigest()[:8]
+    return f"reviewq-{token}-{review_id}"
+
+
+def kill_stale(cfg: Config, review_ids: list[int]) -> None:
+    """Containers whose server is gone. They are `--rm`, so nothing cleans up
+    after them, and until one finishes it is still talking to the API on someone
+    else's behalf and still spending.
+
+    Synchronous and best effort: this runs at boot, before there is a loop to
+    await on, and a docker that will not answer must not keep the queue down.
+    """
+    if not review_ids:
+        return
+    names = [container_name(cfg, i) for i in review_ids]
+    try:
+        # one call, and non-zero for every name that was already gone — which is
+        # the normal case and not worth reading
+        subprocess.run(
+            ["docker", "kill", *names],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as ex:
+        logger.warning("could not kill stale container(s) %s: %s", ", ".join(names), ex)
+
+
 async def run_review(cfg: Config, review_id: int, workspace: Path, *,
                      target: Target, prompt: str) -> Run:
-    name = f"reviewq-{review_id}"
+    name = container_name(cfg, review_id)
     argv = _argv(cfg, name, workspace, target=target)
     logger.info("spawning %s for %s", name, workspace)
 
