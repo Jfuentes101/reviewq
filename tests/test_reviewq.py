@@ -431,3 +431,22 @@ async def test_an_intent_to_add_entry_says_what_to_do_about_it(tmp_path):
 
     with pytest.raises(RuntimeError, match="git add -N"):
         await snapshot(ws, "origin/main")
+
+
+def test_the_socket_listener_is_only_its_owners(tmp_path):
+    import socket
+    import stat
+
+    from reviewq.server import listeners
+
+    sock = tmp_path / "s" / "reviewq.sock"
+    socks = listeners(Config(state_dir=tmp_path, port=0, socket=sock))
+    try:
+        assert [s.family for s in socks] == [socket.AF_INET, socket.AF_UNIX]
+        assert stat.S_IMODE(sock.stat().st_mode) == 0o600
+    finally:
+        for s in socks:
+            s.close()
+    tcp_only = listeners(Config(state_dir=tmp_path, port=0))
+    assert len(tcp_only) == 1
+    tcp_only[0].close()

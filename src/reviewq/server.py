@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 from pathlib import Path
 from typing import Any
 
+import anyio
+import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
@@ -25,6 +28,9 @@ from reviewq.contract import CONTEXT_HELP
 from reviewq.reviews import Queue, as_result
 
 logger = logging.getLogger("reviewq.server")
+
+# the Host header a client over the socket sends: http://reviewq/mcp
+SOCKET_HOST = "reviewq"
 
 
 def build_server(cfg: Config, queue: Queue) -> MCPServer:
@@ -178,17 +184,36 @@ def main() -> None:
         cfg.max_concurrent, cfg.state_dir,
     )
     allowed = [f"{cfg.host}:{cfg.port}", cfg.host, f"localhost:{cfg.port}", "localhost"]
-    build_server(cfg, queue).run(
-        transport="streamable-http",
-        host=cfg.host,
-        port=cfg.port,
+    if cfg.socket is not None:
+        allowed.append(SOCKET_HOST)
+    app = build_server(cfg, queue).streamable_http_app(
         # each Claude instance is a short-lived client; there is no session worth
         # keeping, and the queue's state lives in SQLite rather than in a session
         stateless_http=True,
         transport_security=TransportSecuritySettings(
             allowed_hosts=allowed, allowed_origins=allowed
         ),
+        host=cfg.host,
     )
+    anyio.run(uvicorn.Server(uvicorn.Config(app, log_level="info")).serve, listeners(cfg))
+
+
+def listeners(cfg: Config) -> list[socket.socket]:
+    """One server, one lifespan, both sockets: a second uvicorn would start the
+    session manager twice, and it refuses."""
+    tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp.bind((cfg.host, cfg.port))
+    out = [tcp]
+    if cfg.socket is not None:
+        cfg.socket.parent.mkdir(parents=True, exist_ok=True)
+        cfg.socket.unlink(missing_ok=True)
+        uds = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        uds.bind(str(cfg.socket))
+        # whoever can open this can queue a review of any repo on the host
+        cfg.socket.chmod(0o600)
+        out.append(uds)
+    return out
 
 
 if __name__ == "__main__":

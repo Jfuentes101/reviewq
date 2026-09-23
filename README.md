@@ -160,6 +160,7 @@ Everything is an environment variable and everything has a default that works.
 | `REVIEWQ_EFFORT` | `high` | |
 | `REVIEWQ_CPUS` / `REVIEWQ_MEMORY` / `REVIEWQ_PIDS_LIMIT` | `2` / `4g` / `512` | |
 | `REVIEWQ_HOST` / `REVIEWQ_PORT` | `127.0.0.1` / `4030` | |
+| `REVIEWQ_SOCKET` | unset | also listen on this unix socket (mode 600), for a container given the file and not the host's network. Clients send `Host: reviewq`. Keep the path under 108 bytes |
 | `REVIEWQ_STATE_DIR` | `~/.local/share/reviewq` | the queue's SQLite file |
 | `REVIEWQ_LOG_LEVEL` | `INFO` | |
 | `REVIEWQ_NO_NEW_PRIVILEGES` | `false` | see below |

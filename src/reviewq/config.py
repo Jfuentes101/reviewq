@@ -49,6 +49,9 @@ class Config:
     no_new_privileges: bool = False
     host: str = "127.0.0.1"
     port: int = 4030
+    # a second listener, for a container that gets this file and nothing else of
+    # the host's network. Unset = TCP only
+    socket: Path | None = None
 
     @property
     def db_path(self) -> Path:
@@ -74,6 +77,7 @@ class Config:
             no_new_privileges=_flag("REVIEWQ_NO_NEW_PRIVILEGES", d.no_new_privileges),
             host=os.environ.get("REVIEWQ_HOST", d.host),
             port=int(os.environ.get("REVIEWQ_PORT", d.port)),
+            socket=Path(s) if (s := os.environ.get("REVIEWQ_SOCKET", "").strip()) else None,
         )
 
 
