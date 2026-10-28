@@ -168,7 +168,7 @@ def kill_stale(cfg: Config, review_ids: list[int]) -> None:
         # one call, and non-zero for every name that was already gone — which is
         # the normal case and not worth reading
         subprocess.run(
-            ["docker", "kill", *names],
+            [cfg.runtime, "kill", *names],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=30, check=False,
         )
@@ -196,7 +196,7 @@ async def run_review(cfg: Config, review_id: int, workspace: Path, *,
             proc.communicate(prompt.encode()), timeout=cfg.timeout_s
         )
     except TimeoutError:
-        await _kill(name)
+        await _kill(cfg.runtime, name)
         await proc.wait()  # the client exits once the container is gone
         return Run(ok=False, duration_s=loop.time() - started,
                    error=f"timed out after {cfg.timeout_s}s")
@@ -222,7 +222,7 @@ async def run_review(cfg: Config, review_id: int, workspace: Path, *,
 
 def _argv(cfg: Config, name: str, workspace: Path, *, target: Target) -> list[str]:
     argv = [
-        "docker", "run", "--rm", "-i",
+        cfg.runtime, "run", "--rm", "-i",
         "--name", name,
         "--cpus", cfg.cpus,
         "--memory", cfg.memory,
@@ -237,9 +237,24 @@ def _argv(cfg: Config, name: str, workspace: Path, *, target: Target) -> list[st
         # that is the input shape it already has a local path for
         "-e", f"REVIEW_TARGET={target.branch}",
     ]
+    if cfg.runtime == "podman" or cfg.runtime.endswith("/podman"):
+        # rootless: keep-id makes the container user the host user, so the
+        # read-only workspace and the credentials stay readable; SELinux labels
+        # are switched off rather than relabelling the user's own checkout
+        argv += ["--userns=keep-id", "--security-opt", "label=disable"]
+    if cfg.network:
+        argv += ["--network", cfg.network]
     if cfg.no_new_privileges:
         argv += ["--security-opt", "no-new-privileges"]
-    if cfg.api_key:
+    if cfg.anthropic_base_url:
+        # an Anthropic-compatible endpoint (Ollama): no key, no session file. The
+        # values go by name like the API key; the empty ANTHROPIC_API_KEY stops the
+        # CLI preferring a key over the token
+        argv += ["-e", "ANTHROPIC_BASE_URL", "-e", "ANTHROPIC_AUTH_TOKEN",
+                 "-e", "ANTHROPIC_API_KEY", "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]
+        if cfg.model:
+            argv += ["-e", "ANTHROPIC_MODEL"]
+    elif cfg.api_key:
         # by name, not by value: an argv is world-readable through /proc, so the
         # docker client reads this out of its own environment instead (see _env)
         argv += ["-e", "ANTHROPIC_API_KEY"]
@@ -256,6 +271,14 @@ def _argv(cfg: Config, name: str, workspace: Path, *, target: Target) -> list[st
 
 def _env(cfg: Config) -> dict[str, str]:
     """What `docker run -e NAME` picks up, kept off the command line."""
+    if cfg.anthropic_base_url:
+        env = {
+            "ANTHROPIC_BASE_URL": cfg.anthropic_base_url,
+            "ANTHROPIC_AUTH_TOKEN": cfg.auth_token,
+            "ANTHROPIC_API_KEY": "",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        }
+        return {**env, "ANTHROPIC_MODEL": cfg.model} if cfg.model else env
     return {"ANTHROPIC_API_KEY": cfg.api_key} if cfg.api_key else {}
 
 
@@ -293,9 +316,9 @@ async def _git(workspace: Path, *args: str) -> str:
     return out.decode().strip()
 
 
-async def _kill(name: str) -> None:
+async def _kill(runtime: str, name: str) -> None:
     proc = await asyncio.create_subprocess_exec(
-        "docker", "kill", name,
+        runtime, "kill", name,
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
     )
     await proc.wait()

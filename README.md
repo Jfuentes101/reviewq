@@ -154,6 +154,11 @@ Everything is an environment variable and everything has a default that works.
 | `REVIEWQ_REVIEW_COMMAND` | `.claude/commands/code-review.md` | read from the repo under review |
 | `REVIEWQ_BASE_REF` | `origin/main` | what a review diffs against, per request overridable |
 | `REVIEWQ_MAX_CONCURRENT` | `2` | containers at once; the only brake on spend |
+| `REVIEWQ_RUNTIME` | `docker` | container CLI; `podman` adds `--userns=keep-id` and disables SELinux labels for the mount |
+| `REVIEWQ_ANTHROPIC_BASE_URL` | — | run the reviewer against an Anthropic-compatible endpoint (e.g. Ollama `http://host.containers.internal:11434`) instead of Anthropic. Replaces key/session |
+| `REVIEWQ_MODEL` | — | model that endpoint serves (`ANTHROPIC_MODEL` in the container) |
+| `REVIEWQ_ANTHROPIC_AUTH_TOKEN` | `ollama` | token sent to that endpoint |
+| `REVIEWQ_NETWORK` | unset | `--network` for the container (`host` to reach a localhost-only service) |
 | `REVIEWQ_IMAGE` | `reviewq-reviewer:latest` | |
 | `REVIEWQ_CONTAINER_HOME` | `/home/reviewer` | where credentials mount inside it |
 | `REVIEWQ_TIMEOUT_S` | `1800` | |

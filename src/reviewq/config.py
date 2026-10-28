@@ -14,6 +14,19 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Config:
     image: str = "reviewq-reviewer:latest"
+    # The container CLI. "podman" gets rootless-friendly flags (see runner._argv).
+    runtime: str = "docker"
+    # An Anthropic-compatible endpoint to run the reviewer against instead of
+    # Anthropic itself, e.g. a local Ollama (http://host.containers.internal:11434).
+    # Set, it replaces the API key / session as the way the review is paid for.
+    anthropic_base_url: str | None = None
+    # Model name that endpoint serves, passed to the CLI as ANTHROPIC_MODEL.
+    model: str | None = None
+    # Bearer token sent to that endpoint. Ollama ignores it but the CLI wants one.
+    auth_token: str = "ollama"
+    # --network for the container. Unset = the runtime's default. "host" is the
+    # blunt way to reach a service bound to the host's localhost.
+    network: str | None = None
     # Where the queue and the results live. One file, one writer.
     state_dir: Path = Path.home() / ".local/share/reviewq"
     # How the reviewer pays for itself, in the order they are tried. An API key
@@ -62,6 +75,11 @@ class Config:
         d = cls()
         return cls(
             image=os.environ.get("REVIEWQ_IMAGE", d.image),
+            runtime=os.environ.get("REVIEWQ_RUNTIME", d.runtime),
+            anthropic_base_url=os.environ.get("REVIEWQ_ANTHROPIC_BASE_URL", "").strip() or None,
+            model=os.environ.get("REVIEWQ_MODEL", "").strip() or None,
+            auth_token=os.environ.get("REVIEWQ_ANTHROPIC_AUTH_TOKEN", d.auth_token),
+            network=os.environ.get("REVIEWQ_NETWORK", "").strip() or None,
             state_dir=Path(os.environ.get("REVIEWQ_STATE_DIR", d.state_dir)),
             api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip() or None,
             credentials=Path(os.environ.get("REVIEWQ_CREDENTIALS", d.credentials)),
@@ -85,10 +103,10 @@ class Config:
         """Why no review can run, if none can. Asked at boot rather than on the
         first request: a machine with neither is a setup that never worked, and
         finding out ten minutes into a review is the expensive way to learn it."""
-        if self.api_key or self.credentials.is_file():
+        if self.anthropic_base_url or self.api_key or self.credentials.is_file():
             return None
         return (
-            f"no model credentials: set ANTHROPIC_API_KEY, or log in with `claude` "
+            f"no model credentials: set ANTHROPIC_API_KEY, set REVIEWQ_ANTHROPIC_BASE_URL, or log in with `claude` "
             f"so that {self.credentials} exists (REVIEWQ_CREDENTIALS points elsewhere)"
         )
 

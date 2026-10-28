@@ -349,6 +349,42 @@ def test_a_key_wins_over_a_session_file(tmp_path):
     assert str(creds) not in " ".join(argv), "the file is not mounted when a key is set"
 
 
+def test_an_ollama_endpoint_goes_by_name_and_replaces_the_credentials(tmp_path):
+    from reviewq.runner import _argv, _env
+
+    creds = tmp_path / "creds.json"
+    creds.write_text("{}")
+    conf = cfg(tmp_path, runtime="podman", credentials=creds, network="host",
+               anthropic_base_url="http://localhost:11434", model="glm-5.3:cloud",
+               auth_token="tok")
+    argv = _argv(conf, "n", tmp_path, target=Target("h", "b", "bs", "origin/main"))
+    joined = " ".join(argv)
+    assert argv[0] == "podman"
+    assert "--userns=keep-id" in argv and "--network" in argv
+    assert "localhost:11434" not in joined and "glm-5.3" not in joined and "tok" not in argv
+    assert str(creds) not in joined, "no session file when an endpoint is set"
+    for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"):
+        assert name in argv
+    env = _env(conf)
+    assert env["ANTHROPIC_BASE_URL"] == "http://localhost:11434"
+    assert env["ANTHROPIC_MODEL"] == "glm-5.3:cloud" and env["ANTHROPIC_API_KEY"] == ""
+
+
+def test_docker_stays_the_default_runtime(tmp_path):
+    from reviewq.runner import _argv
+
+    argv = _argv(cfg(tmp_path, api_key="k"), "n", tmp_path,
+                 target=Target("h", "b", "bs", "origin/main"))
+    assert argv[:3] == ["docker", "run", "--rm"]
+    assert "--userns=keep-id" not in argv and "--network" not in argv
+
+
+def test_an_endpoint_alone_is_enough_to_serve(tmp_path):
+    conf = cfg(tmp_path, credentials=tmp_path / "nothing.json",
+               anthropic_base_url="http://localhost:11434")
+    assert conf.why_it_cannot_pay() is None
+
+
 def test_a_machine_with_neither_says_so_before_it_serves(tmp_path):
     conf = cfg(tmp_path, credentials=tmp_path / "nothing.json")
     assert "ANTHROPIC_API_KEY" in (conf.why_it_cannot_pay() or "")
