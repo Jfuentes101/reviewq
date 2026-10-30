@@ -65,8 +65,9 @@ for are Should-Fix; style and wording are Nitpick.
 
 verdict: needs-work if any finding is Critical or Must-Fix; comment if the worst is \
 Should-Fix; ok if the review finished and found nothing above a nitpick; none if the \
-text is not a finished review (it stops mid-way, only plans what to read, or never \
-judges the code).
+text is not a finished review of a code change: it stops mid-way, only plans what to \
+read, refuses, or talks about task status, missing dependencies or next steps instead \
+of judging the code that changed. When in doubt, none.
 
 summary: two or three sentences in the review's own voice."""
 
