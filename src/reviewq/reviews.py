@@ -18,11 +18,13 @@ import logging
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 
 from reviewq.config import Config
-from reviewq.contract import preamble, severity_count, verdict_understated
+from reviewq.contract import Blocks, preamble, severity_count, verdict_understated
 from reviewq.runner import Run, Target, kill_stale, run_review, snapshot
+from reviewq.structure import recover
 
 logger = logging.getLogger("reviewq.queue")
 
@@ -53,6 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_reviews_state ON reviews(state, id);
 
 Runner = Callable[[int, Path, Target, str], Awaitable[Run]]
 Snapshotter = Callable[[Path, str], Awaitable[Target]]
+Recoverer = Callable[[str], Awaitable[Blocks | None]]
 
 
 def now_ms() -> int:
@@ -66,6 +69,7 @@ class Queue:
         *,
         runner: Runner | None = None,
         snapshotter: Snapshotter | None = None,
+        recoverer: Recoverer | None = None,
     ) -> None:
         self.cfg = cfg
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +84,7 @@ class Queue:
         self._tasks: set[asyncio.Task[None]] = set()
         self._run: Runner = runner or self._spawn
         self._snapshot: Snapshotter = snapshotter or snapshot
+        self._recover: Recoverer | None = recoverer or (self._structure if cfg.ollama_url else None)
         self._reap()
 
     def _reap(self) -> None:
@@ -109,6 +114,22 @@ class Queue:
 
     async def _spawn(self, review_id: int, workspace: Path, target: Target, prompt: str) -> Run:
         return await run_review(self.cfg, review_id, workspace, target=target, prompt=prompt)
+
+    async def _structure(self, raw: str) -> Blocks | None:
+        return await recover(self.cfg, raw)
+
+    async def _recovered(self, review_id: int, run: Run) -> Run:
+        """A run that reviewed but wrote no verdict gets one structured-output pass
+        over its own words before it counts as failed. Only that case: a run with a
+        verdict is the reviewer's judgement and is never read twice."""
+        if (self._recover is None or not run.ok or run.blocks is None
+                or run.blocks.verdict or not run.raw.strip()):
+            return run
+        blocks = await self._recover(run.raw)
+        if blocks is None or not blocks.verdict:
+            return run
+        logger.info("review %d: verdict read out of the raw review (%s)", review_id, blocks.verdict)
+        return replace(run, blocks=blocks)
 
     # ----- what the MCP tools call ---------------------------------------
 
@@ -169,7 +190,9 @@ class Queue:
                     base_ref=target.base_ref, base_sha=target.base_sha,
                     head=target.sha, branch=target.branch, context=context,
                 )
-                run = await self._run(review_id, workspace, target, prompt)
+                run = await self._recovered(
+                    review_id, await self._run(review_id, workspace, target, prompt)
+                )
         except Exception as ex:  # noqa: BLE001 — a crashed task must leave a readable row
             logger.exception("review %d crashed", review_id)
             self._fail(review_id, str(ex))

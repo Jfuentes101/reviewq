@@ -9,14 +9,16 @@ silent empty result, and that the block parser cannot be fooled by what it reads
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 from reviewq.config import Config
-from reviewq.contract import parse_blocks, preamble, verdict_understated
+from reviewq.contract import Blocks, parse_blocks, preamble, verdict_understated
 from reviewq.reviews import Queue, as_result
 from reviewq.runner import Run, Target, _git
+from reviewq.structure import NOTE, SCHEMA, as_blocks, recover
 
 FULL = """\
 Some reasoning the model did out loud.
@@ -349,6 +351,42 @@ def test_a_key_wins_over_a_session_file(tmp_path):
     assert str(creds) not in " ".join(argv), "the file is not mounted when a key is set"
 
 
+def test_an_ollama_endpoint_goes_by_name_and_replaces_the_credentials(tmp_path):
+    from reviewq.runner import _argv, _env
+
+    creds = tmp_path / "creds.json"
+    creds.write_text("{}")
+    conf = cfg(tmp_path, runtime="podman", credentials=creds, network="host",
+               anthropic_base_url="http://localhost:11434", model="glm-5.3:cloud",
+               auth_token="tok")
+    argv = _argv(conf, "n", tmp_path, target=Target("h", "b", "bs", "origin/main"))
+    joined = " ".join(argv)
+    assert argv[0] == "podman"
+    assert "--userns=keep-id" in argv and "--network" in argv
+    assert "localhost:11434" not in joined and "glm-5.3" not in joined and "tok" not in argv
+    assert str(creds) not in joined, "no session file when an endpoint is set"
+    for name in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"):
+        assert name in argv
+    env = _env(conf)
+    assert env["ANTHROPIC_BASE_URL"] == "http://localhost:11434"
+    assert env["ANTHROPIC_MODEL"] == "glm-5.3:cloud" and env["ANTHROPIC_API_KEY"] == ""
+
+
+def test_docker_stays_the_default_runtime(tmp_path):
+    from reviewq.runner import _argv
+
+    argv = _argv(cfg(tmp_path, api_key="k"), "n", tmp_path,
+                 target=Target("h", "b", "bs", "origin/main"))
+    assert argv[:3] == ["docker", "run", "--rm"]
+    assert "--userns=keep-id" not in argv and "--network" not in argv
+
+
+def test_an_endpoint_alone_is_enough_to_serve(tmp_path):
+    conf = cfg(tmp_path, credentials=tmp_path / "nothing.json",
+               anthropic_base_url="http://localhost:11434")
+    assert conf.why_it_cannot_pay() is None
+
+
 def test_a_machine_with_neither_says_so_before_it_serves(tmp_path):
     conf = cfg(tmp_path, credentials=tmp_path / "nothing.json")
     assert "ANTHROPIC_API_KEY" in (conf.why_it_cannot_pay() or "")
@@ -450,3 +488,121 @@ def test_the_socket_listener_is_only_its_owners(tmp_path):
     tcp_only = listeners(Config(state_dir=tmp_path, port=0))
     assert len(tcp_only) == 1
     tcp_only[0].close()
+
+
+# ----- the structured-output second chance --------------------------------
+
+PROSE = "I read the diff. The loop in a.py:12 never ends when n is 0; that is a bug."
+
+
+async def _prose(review_id, workspace, target, prompt):
+    return Run(ok=True, blocks=parse_blocks(PROSE), raw=PROSE)
+
+
+async def test_a_review_without_blocks_is_read_back_by_a_second_pass(tmp_path):
+    seen = []
+
+    async def reader(raw):
+        seen.append(raw)
+        return Blocks(verdict="needs-work", summary="s", findings=[{"severity": "Must-Fix"}])
+
+    q = Queue(cfg(tmp_path), runner=_prose, snapshotter=_fixed, recoverer=reader)
+    rid = await q.submit(tmp_path, base_ref="origin/main", context="")
+    await q.drain()
+
+    result = as_result(q.get(rid))
+    assert seen == [PROSE], "it reads the reviewer's own words, nothing else"
+    assert result["state"] == "done"
+    assert result["verdict"] == "needs-work"
+    assert result["blocking"] == 1
+    q.close()
+
+
+async def test_a_second_pass_with_no_reading_leaves_the_review_failed(tmp_path):
+    async def nothing(raw):
+        return None
+
+    q = Queue(cfg(tmp_path), runner=_prose, snapshotter=_fixed, recoverer=nothing)
+    rid = await q.submit(tmp_path, base_ref="origin/main", context="")
+    await q.drain()
+
+    row = q.get(rid)
+    assert row["state"] == "failed"
+    assert "no verdict" in row["error"]
+    assert row["raw"] == PROSE
+    q.close()
+
+
+async def test_a_run_with_a_verdict_is_never_read_twice(tmp_path):
+    calls = []
+
+    async def reader(raw):
+        calls.append(raw)
+        return Blocks(verdict="ok", summary="", findings=[])
+
+    q = Queue(cfg(tmp_path), runner=_ok, snapshotter=_fixed, recoverer=reader)
+    rid = await q.submit(tmp_path, base_ref="origin/main", context="")
+    await q.drain()
+
+    assert calls == []
+    assert as_result(q.get(rid))["verdict"] == "needs-work", "the reviewer's own, untouched"
+    q.close()
+
+
+def test_without_an_ollama_url_there_is_no_second_pass(tmp_path):
+    q = Queue(cfg(tmp_path), runner=_prose, snapshotter=_fixed)
+    assert q._recover is None
+    q.close()
+    q = Queue(cfg(tmp_path, ollama_url="http://127.0.0.1:11434"), runner=_prose, snapshotter=_fixed)
+    assert q._recover is not None
+    q.close()
+
+
+def test_no_judgement_is_not_read_as_ok():
+    assert as_blocks({"verdict": "none", "summary": "stopped mid-way", "findings": []}) is None
+    assert as_blocks({"verdict": "looks fine"}) is None
+    assert as_blocks(["not", "an", "object"]) is None
+
+
+def test_a_reading_says_it_is_one_and_drops_what_is_not_a_finding():
+    blocks = as_blocks({"verdict": "Comment", "summary": "Mostly fine.", "findings": [
+        {"path": "a.py", "line": 1, "severity": "Should-Fix", "title": "t", "body": "b"},
+        "a bare string",
+    ]})
+    assert blocks.verdict == "comment"
+    assert blocks.summary.startswith("Mostly fine.")
+    assert NOTE in blocks.summary
+    assert len(blocks.findings) == 1
+
+
+async def test_the_second_pass_asks_ollama_for_the_schema(tmp_path, monkeypatch):
+    sent = {}
+
+    def fake_post(url, body, timeout):
+        sent.update(url=url, body=body, timeout=timeout)
+        content = json.dumps({"verdict": "ok", "summary": "Nothing to fix.", "findings": []})
+        return {"message": {"content": content}}
+
+    monkeypatch.setattr("reviewq.structure._post", fake_post)
+    c = cfg(tmp_path, ollama_url="http://127.0.0.1:11434/", model="qwen", structure_timeout_s=9)
+    blocks = await recover(c, PROSE)
+
+    assert blocks.verdict == "ok"
+    assert sent["url"] == "http://127.0.0.1:11434/api/chat"
+    assert sent["body"]["model"] == "qwen", "the reviewer's model unless another is named"
+    assert sent["body"]["format"] == SCHEMA
+    assert sent["body"]["messages"][-1]["content"] == PROSE
+    assert sent["timeout"] == 9
+
+
+async def test_the_second_pass_never_raises(tmp_path, monkeypatch):
+    import urllib.error
+
+    def down(url, body, timeout):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr("reviewq.structure._post", down)
+    c = cfg(tmp_path, ollama_url="http://127.0.0.1:11434", model="qwen")
+    assert await recover(c, PROSE) is None
+    assert await recover(cfg(tmp_path, ollama_url="http://x", model="qwen"), "   ") is None
+    assert await recover(cfg(tmp_path, ollama_url="http://x"), PROSE) is None, "no model, no call"

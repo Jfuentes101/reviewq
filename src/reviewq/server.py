@@ -180,7 +180,9 @@ def main() -> None:
     queue = Queue(cfg)
     logger.info(
         "reviewq up on %s:%d — image=%s, auth=%s, %d concurrent, state in %s",
-        cfg.host, cfg.port, cfg.image, "api key" if cfg.api_key else "oauth session",
+        cfg.host, cfg.port, cfg.image,
+        f"{cfg.anthropic_base_url} model={cfg.model}" if cfg.anthropic_base_url
+        else "api key" if cfg.api_key else "oauth session",
         cfg.max_concurrent, cfg.state_dir,
     )
     allowed = [f"{cfg.host}:{cfg.port}", cfg.host, f"localhost:{cfg.port}", "localhost"]
