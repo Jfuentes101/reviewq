@@ -158,6 +158,9 @@ Everything is an environment variable and everything has a default that works.
 | `REVIEWQ_ANTHROPIC_BASE_URL` | — | run the reviewer against an Anthropic-compatible endpoint (e.g. Ollama `http://host.containers.internal:11434`) instead of Anthropic. Replaces key/session |
 | `REVIEWQ_MODEL` | — | model that endpoint serves (`ANTHROPIC_MODEL` in the container) |
 | `REVIEWQ_ANTHROPIC_AUTH_TOKEN` | `ollama` | token sent to that endpoint |
+| `REVIEWQ_OLLAMA_URL` | unset | the same Ollama as the host sees it (`http://127.0.0.1:11434`). Set, a run that reviewed but wrote no verdict blocks gets one structured-output pass over its own text before it counts as failed (see below) |
+| `REVIEWQ_STRUCTURE_MODEL` | `REVIEWQ_MODEL` | model for that pass. Pick a small non-thinking one (`qwen2.5-coder`) |
+| `REVIEWQ_STRUCTURE_TIMEOUT_S` | `600` | |
 | `REVIEWQ_NETWORK` | unset | `--network` for the container (`host` to reach a localhost-only service) |
 | `REVIEWQ_IMAGE` | `reviewq-reviewer:latest` | |
 | `REVIEWQ_CONTAINER_HOME` | `/home/reviewer` | where credentials mount inside it |
@@ -183,6 +186,15 @@ change with it; a mismatch breaks the credentials mount with no error that says 
 (Ubuntu, Pop!_OS) the docker-default profile reads the exec-time transition as
 gaining privileges and every `execve` in the container returns EPERM. The container
 still runs unprivileged with all capabilities dropped.
+
+**`REVIEWQ_OLLAMA_URL`** is for small local reviewers. They often read the diff, find
+the bug, and then end on prose without the three blocks, which used to fail the run
+and waste the expensive half. With it set, the raw review goes once more to Ollama's
+`/api/chat` with a JSON schema as `format`: no tools, no repo, only the reviewer's own
+words. The pass copies findings and never adds one, and a text with no judgement in it
+(a plan, a run cut short) answers `none` and the review still fails. The summary of
+a review read this way says so. Use a non-thinking model for it: on Ollama 0.20 a
+thinking model asked not to think ignores `format`, and left to think it is slow.
 
 ## Running it as a service
 

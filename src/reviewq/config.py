@@ -24,6 +24,14 @@ class Config:
     model: str | None = None
     # Bearer token sent to that endpoint. Ollama ignores it but the CLI wants one.
     auth_token: str = "ollama"
+    # The same Ollama as the HOST sees it (http://127.0.0.1:11434), for the
+    # structured-output pass that reads a verdict out of a review that never wrote
+    # its blocks (see structure.py). Not anthropic_base_url: that one is the
+    # container's view. Unset = no second pass.
+    ollama_url: str | None = None
+    # Model for that pass. Unset = the reviewer's own, which is already loaded.
+    structure_model: str | None = None
+    structure_timeout_s: int = 600
     # --network for the container. Unset = the runtime's default. "host" is the
     # blunt way to reach a service bound to the host's localhost.
     network: str | None = None
@@ -79,6 +87,11 @@ class Config:
             anthropic_base_url=os.environ.get("REVIEWQ_ANTHROPIC_BASE_URL", "").strip() or None,
             model=os.environ.get("REVIEWQ_MODEL", "").strip() or None,
             auth_token=os.environ.get("REVIEWQ_ANTHROPIC_AUTH_TOKEN", d.auth_token),
+            ollama_url=os.environ.get("REVIEWQ_OLLAMA_URL", "").strip() or None,
+            structure_model=os.environ.get("REVIEWQ_STRUCTURE_MODEL", "").strip() or None,
+            structure_timeout_s=int(
+                os.environ.get("REVIEWQ_STRUCTURE_TIMEOUT_S", d.structure_timeout_s)
+            ),
             network=os.environ.get("REVIEWQ_NETWORK", "").strip() or None,
             state_dir=Path(os.environ.get("REVIEWQ_STATE_DIR", d.state_dir)),
             api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip() or None,
